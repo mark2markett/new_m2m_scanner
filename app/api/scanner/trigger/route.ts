@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SP500_CONSTITUENTS } from '@/lib/data/sp500';
+import { parseWatchlistCsv } from '@/lib/data/watchlistLoader';
 import { ScannerEngine } from '@/lib/server/scannerEngine';
 import { KVStore } from '@/lib/server/kvStore';
 import type { ScanBatchStatus } from '@/lib/types';
+import path from 'path';
+import fs from 'fs';
 
 const BATCH_SIZE = 10;
 
@@ -16,6 +19,28 @@ function isAuthorized(request: NextRequest): boolean {
   return false;
 }
 
+/**
+ * Load stocks for a named watchlist (CSV-based or full SP500).
+ */
+function loadWatchlistStocks(watchlistId: string | null): ReturnType<typeof SP500_CONSTITUENTS.slice> {
+  if (!watchlistId || watchlistId === 'sp500_all') {
+    return SP500_CONSTITUENTS;
+  }
+
+  try {
+    const csvPath = path.join(process.cwd(), 'public', 'watchlists', `${watchlistId}.csv`);
+    if (fs.existsSync(csvPath)) {
+      const csv = fs.readFileSync(csvPath, 'utf-8');
+      const parsed = parseWatchlistCsv(csv);
+      if (parsed.length > 0) return parsed;
+    }
+  } catch (err) {
+    console.warn(`[Trigger] Could not load watchlist '${watchlistId}':`, err);
+  }
+
+  return SP500_CONSTITUENTS;
+}
+
 export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
@@ -23,11 +48,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const totalAll = SP500_CONSTITUENTS.length;
-  const startIndex = parseInt(request.nextUrl.searchParams.get('start') || '0', 10);
-  const endIndex = parseInt(request.nextUrl.searchParams.get('end') || String(totalAll), 10);
+  // Watchlist selection — CSV watchlist or full S&P 500
+  const watchlistId = request.nextUrl.searchParams.get('watchlist');
+  const allStocks = loadWatchlistStocks(watchlistId);
+  const totalAll = allStocks.length;
 
-  const sliceStocks = SP500_CONSTITUENTS.slice(startIndex, endIndex);
+  // Dynamic slice parameters
+  const startIndex = parseInt(request.nextUrl.searchParams.get('start') || '0', 10);
+  const endIndex   = parseInt(request.nextUrl.searchParams.get('end')   || String(totalAll), 10);
+
+  const sliceStocks = allStocks.slice(startIndex, endIndex);
   const sliceSize = sliceStocks.length;
 
   if (sliceSize === 0) {
@@ -74,6 +104,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     message: `Slice ${startIndex}-${endIndex} complete`,
     scanDate,
+    watchlist: watchlistId || 'sp500_all',
     sliceStocks: sliceSize,
     successCount: allResults.filter(s => !s.error).length,
     errorCount: allResults.filter(s => !!s.error).length,

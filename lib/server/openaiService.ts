@@ -1,5 +1,12 @@
 import 'server-only';
 
+export interface SpyRelativeStrength {
+  rs10d: number;  // stock 10d return / SPY 10d return
+  rs20d: number;
+  rs50d: number;
+  label: 'leading' | 'inline' | 'lagging';
+}
+
 export class OpenAIService {
   private static readonly API_URL = 'https://api.openai.com/v1/chat/completions';
 
@@ -36,6 +43,7 @@ export class OpenAIService {
     totalFactors: number;
     publishable: boolean;
     sentiment: string;
+    spyRS?: SpyRelativeStrength | null;
   }): Promise<{
     keySignal: string;
     risk: string;
@@ -50,10 +58,17 @@ export class OpenAIService {
     const supportStr = data.support.slice(0, 3).map(s => '$' + s.toFixed(2)).join(', ') || 'none';
     const resistStr = data.resistance.slice(0, 3).map(r => '$' + r.toFixed(2)).join(', ') || 'none';
 
+    // Build SPY relative strength line for the prompt
+    let rsLine = '';
+    if (data.spyRS) {
+      const rs = data.spyRS;
+      rsLine = `\nSPY REL STRENGTH: 10d ${rs.rs10d.toFixed(2)}x | 20d ${rs.rs20d.toFixed(2)}x | 50d ${rs.rs50d.toFixed(2)}x | Status: ${rs.label.toUpperCase()}`;
+    }
+
     const userPrompt = `Summarize the setup for ${data.symbol} at $${data.price.toFixed(2)} (${data.change >= 0 ? '+' : ''}${data.change.toFixed(2)}%):
 
 INDICATORS: RSI ${data.rsi.toFixed(1)} | MACD ${data.macd.toFixed(3)} vs Sig ${data.signal.toFixed(3)} (Hist: ${data.histogram.toFixed(3)}) | EMA20 $${data.ema20.toFixed(2)} EMA50 $${data.ema50.toFixed(2)} | ADX ${data.adx.toFixed(1)} | ATR $${data.atr.toFixed(2)} | BB ${data.bbLower.toFixed(2)}-${data.bbUpper.toFixed(2)} | Stoch K${data.stochK.toFixed(1)} D${data.stochD.toFixed(1)} | CMF ${data.cmf.toFixed(3)}
-STRUCTURE: Support ${supportStr} | Resistance ${resistStr} | Stage: ${data.setupStage} | Vol Regime: ${data.volatilityRegime}
+STRUCTURE: Support ${supportStr} | Resistance ${resistStr} | Stage: ${data.setupStage} | Vol Regime: ${data.volatilityRegime}${rsLine}
 SCORECARD: ${data.score}/${data.maxScore} (${data.factorsPassed}/${data.totalFactors} factors) | Publishable: ${data.publishable ? 'yes' : 'no'}
 SENTIMENT: ${data.sentiment}
 
@@ -75,17 +90,17 @@ Return JSON with exactly these 3 fields:
         messages: [
           {
             role: 'system',
-            content: 'You are a quantitative setup scanner for the M2M Stock Intelligence platform. Your task: identify the single most important signal and primary risk for a stock setup. Use observational educational language — never advisory language. Return ONLY valid JSON with keySignal, risk, and summary fields.'
+            content: 'You are a quantitative setup scanner for the M2M Stock Intelligence platform. Your task: identify the single most important signal and primary risk for a stock setup. Use observational educational language — never advisory language. Return ONLY valid JSON with keySignal, risk, and summary fields. Do not wrap the JSON in markdown code fences.',
           },
           {
             role: 'user',
-            content: userPrompt
-          }
+            content: userPrompt,
+          },
         ],
         max_tokens: 300,
         temperature: 0.2,
-        response_format: { type: 'json_object' }
-      })
+        response_format: { type: 'json_object' },
+      }),
     });
 
     if (!response.ok) {
@@ -98,7 +113,20 @@ Return JSON with exactly these 3 fields:
       throw new Error('Invalid response from OpenAI API');
     }
 
-    const parsed = JSON.parse(responseData.choices[0].message.content);
+    // Bug Fix #7 — JSON fence handling: strip markdown code fences that some models
+    // still include despite response_format: json_object, then parse safely.
+    const rawContent: string = responseData.choices[0].message.content ?? '';
+    const cleanedContent = rawContent
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleanedContent);
+    } catch {
+      throw new Error(`Failed to parse AI response as JSON: ${rawContent.slice(0, 200)}`);
+    }
 
     return {
       keySignal: String(parsed.keySignal || '').slice(0, 80),

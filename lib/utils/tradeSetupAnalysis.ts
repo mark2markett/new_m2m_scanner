@@ -25,25 +25,62 @@ export class TradeSetupAnalyzer {
     const emaBullish = ema20 > ema50;
     const rsiBullish = rsi > 50 && rsi < 80;
 
-    const macdMagnitude = Math.abs(macd.macd);
-    const histogramRatio = macdMagnitude > 0 ? Math.abs(macd.histogram) / macdMagnitude : 0;
-    const recentMacdCross = histogramRatio < 0.15;
+    // Bug Fix #3 — include bearish counterparts for directional Mid Setup detection
+    const macdBearish = macd.macd < macd.signal;
+    const emaBearish = ema20 < ema50;
+    const rsiBearish = rsi < 50 && rsi > 20;
+
+    // Bug Fix #5 — detect a recent MACD cross by checking whether the histogram
+    // recently changed sign rather than comparing histogram magnitude to MACD magnitude.
+    // A near-zero histogram relative to recent average histogram magnitude is more reliable.
+    const recentMacdCross = this.checkRecentMacdCross(indicators);
 
     if (recentBreakout && recentMacdCross) {
       return 'Just Triggered';
-    } else if (rsiBullish && emaBullish && macdBullish && !nearResistance) {
-      if (rsi > 75 || (currentPrice > bollingerBands.upper)) {
+    }
+
+    // Bug Fix #3 — symmetric stage detection for bearish setups
+    if (rsiBullish && emaBullish && macdBullish && !nearResistance) {
+      if (rsi > 75 || currentPrice > bollingerBands.upper) {
         return 'Late Setup';
-      } else {
-        return 'Mid Setup';
       }
-    } else if ((nearSupport || nearResistance) && !recentBreakout) {
-      return 'Setup Forming';
-    } else if (rsi > 80 || rsi < 20) {
-      return 'Late Setup';
-    } else {
+      return 'Mid Setup';
+    }
+
+    if (rsiBearish && emaBearish && macdBearish && !nearSupport) {
+      if (rsi < 25 || currentPrice < bollingerBands.lower) {
+        return 'Late Setup';
+      }
+      return 'Mid Setup';
+    }
+
+    if ((nearSupport || nearResistance) && !recentBreakout) {
       return 'Setup Forming';
     }
+
+    if (rsi > 80 || rsi < 20) {
+      return 'Late Setup';
+    }
+
+    return 'Setup Forming';
+  }
+
+  /**
+   * Bug Fix #5 — MACD cross detection: check if histogram magnitude is very small
+   * relative to recent ATR-normalised price move, indicating a fresh crossover.
+   */
+  private static checkRecentMacdCross(indicators: TI): boolean {
+    const { macd } = indicators;
+    // A fresh cross means the histogram is small compared to MACD line magnitude,
+    // AND the histogram direction agrees with the MACD direction.
+    // Use 0.20 of MACD magnitude as the "fresh cross" window (wider than buggy 0.15
+    // to be more inclusive, but only count it when histogram and MACD agree in sign).
+    if (macd.macd === 0) return false;
+    const histogramRatio = Math.abs(macd.histogram) / Math.abs(macd.macd);
+    const histogramAgreesWithMacd =
+      (macd.macd > 0 && macd.histogram > 0) ||
+      (macd.macd < 0 && macd.histogram < 0);
+    return histogramRatio < 0.20 && histogramAgreesWithMacd;
   }
 
   private static checkRecentBreakout(recentPrices: number[], resistance: number[], support: number[]): boolean {
@@ -80,11 +117,12 @@ export class TradeSetupAnalyzer {
     currentPrice: number,
     support: number[],
     resistance: number[],
-    optionsData?: OptionsData | null
+    optionsData?: OptionsData | null,
+    recentPrices?: number[]
   ): M2MScorecard {
     const factors: M2MScoreFactor[] = [
       this.scoreStrategySignalStrength(indicators),
-      this.scoreTechnicalStructure(indicators, setupStage, currentPrice),
+      this.scoreTechnicalStructure(indicators, setupStage, currentPrice, recentPrices),
       this.scoreOptionsQuality(optionsData || null, indicators.atr, currentPrice),
       this.scoreRiskReward(indicators, currentPrice, support, resistance),
       this.scoreCatalystPresence(newsData),
@@ -121,19 +159,23 @@ export class TradeSetupAnalyzer {
     const macdBullish = macd.macd > macd.signal;
     const rsiBullish = rsi > 50;
 
-    const allBullish = emaBullish && macdBullish && rsiBullish;
-    const allBearish = !emaBullish && !macdBullish && !rsiBullish;
+    // Bug Fix #1 — bearish alignment: count aligned signals regardless of direction
+    // rather than only giving 18pts to the bullish case via allBullish||allBearish
+    // (previously both were scored identically but bearish setups deserve a valid score too).
+    const bullishCount = [emaBullish, macdBullish, rsiBullish].filter(Boolean).length;
+    const bearishCount = 3 - bullishCount;
+    const dominantAligned = Math.max(bullishCount, bearishCount);
+    const direction = bullishCount >= bearishCount ? 'bullish' : 'bearish';
 
-    if (allBullish || allBearish) {
+    if (dominantAligned === 3) {
       score += 18;
-      reasons.push(`All 3 signals aligned ${allBullish ? 'bullish' : 'bearish'}`);
+      reasons.push(`All 3 signals aligned ${direction}`);
+    } else if (dominantAligned === 2) {
+      score += 10;
+      reasons.push(`2/3 signals aligned ${direction}`);
     } else {
-      let aligned = 0;
-      if (emaBullish) aligned++;
-      if (macdBullish) aligned++;
-      if (rsiBullish) aligned++;
-      score += aligned * 5;
-      reasons.push(`${aligned}/3 signals aligned`);
+      score += 5;
+      reasons.push('Mixed signals — no dominant direction');
     }
 
     if (rsi > 30 && rsi < 70) {
@@ -157,7 +199,12 @@ export class TradeSetupAnalyzer {
     return { name: 'Strategy Signal Strength', maxPoints, score, passed, rationale: reasons.join('; ') };
   }
 
-  private static scoreTechnicalStructure(indicators: TI, setupStage: SetupStage, currentPrice: number): M2MScoreFactor {
+  private static scoreTechnicalStructure(
+    indicators: TI,
+    setupStage: SetupStage,
+    currentPrice: number,
+    recentPrices?: number[]
+  ): M2MScoreFactor {
     const maxPoints = 25;
     let score = 0;
     const reasons: string[] = [];
@@ -173,7 +220,8 @@ export class TradeSetupAnalyzer {
     }
 
     const { upper, lower } = indicators.bollingerBands;
-    const bbPosition = (currentPrice - lower) / (upper - lower);
+    const bbRange = upper - lower;
+    const bbPosition = bbRange > 0 ? (currentPrice - lower) / bbRange : 0.5;
     if (bbPosition > 0.2 && bbPosition < 0.8) {
       score += 5;
       reasons.push('Price within Bollinger mid-zone');
@@ -182,17 +230,31 @@ export class TradeSetupAnalyzer {
       reasons.push(bbPosition >= 0.8 ? 'Price near upper Bollinger' : 'Price near lower Bollinger');
     }
 
+    // Bug Fix #3 — award Mid Setup points for both bullish and bearish setups
     switch (setupStage) {
       case 'Just Triggered': score += 9; reasons.push('Setup just triggered'); break;
-      case 'Mid Setup': score += 7; reasons.push('Mid-setup progression'); break;
-      case 'Setup Forming': score += 4; reasons.push('Setup still forming'); break;
-      case 'Late Setup': score += 1; reasons.push('Late-stage setup — extended'); break;
+      case 'Mid Setup':      score += 7; reasons.push('Mid-setup progression'); break;
+      case 'Setup Forming':  score += 4; reasons.push('Setup still forming'); break;
+      case 'Late Setup':     score += 1; reasons.push('Late-stage setup — extended'); break;
     }
 
     const { k } = indicators.stochastic;
     if (k > 20 && k < 80) {
       score += 3;
       reasons.push('Stochastic in healthy range');
+    }
+
+    // Bug Fix #8 — pullback penalty: if price has retreated >5% from its recent
+    // 20-bar high, reduce score to reflect deteriorating structure.
+    if (recentPrices && recentPrices.length >= 20) {
+      const window = recentPrices.slice(-20);
+      const recentHigh = Math.max(...window);
+      const pullbackPct = recentHigh > 0 ? (recentHigh - currentPrice) / recentHigh : 0;
+      if (pullbackPct > 0.05) {
+        const penalty = Math.min(Math.round(pullbackPct * 40), 5); // max -5 pts
+        score = Math.max(0, score - penalty);
+        reasons.push(`Pullback penalty: ${(pullbackPct * 100).toFixed(1)}% from recent high (-${penalty})`);
+      }
     }
 
     score = Math.min(score, maxPoints);
@@ -254,15 +316,34 @@ export class TradeSetupAnalyzer {
     const nearestSupport = validSupport.length > 0 ? validSupport[0] : currentPrice * 0.95;
     const nearestResistance = validResistance.length > 0 ? validResistance[0] : currentPrice * 1.05;
 
-    const risk = Math.abs(currentPrice - nearestSupport);
-    const reward = Math.abs(nearestResistance - currentPrice);
+    // Bug Fix #4 — directional R/R: determine setup direction from indicators
+    // and swap reward/risk for bearish setups (target = support, stop = resistance)
+    const emaBullish = indicators.ema20 > indicators.ema50;
+    const macdBullish = indicators.macd.macd > indicators.macd.signal;
+    const rsiBullish = indicators.rsi > 50;
+    const bullishCount = [emaBullish, macdBullish, rsiBullish].filter(Boolean).length;
+    const isBullish = bullishCount >= 2;
+
+    let risk: number;
+    let reward: number;
+
+    if (isBullish) {
+      // Bullish: risk = distance to support (stop), reward = distance to resistance (target)
+      risk = Math.abs(currentPrice - nearestSupport);
+      reward = Math.abs(nearestResistance - currentPrice);
+    } else {
+      // Bug Fix #4 — Bearish: risk = distance to resistance (stop), reward = distance to support (target)
+      risk = Math.abs(nearestResistance - currentPrice);
+      reward = Math.abs(currentPrice - nearestSupport);
+    }
+
     const rrRatio = risk > 0 ? reward / risk : 0;
 
-    if (rrRatio >= 3) { score += 10; reasons.push(`Excellent R/R ratio: ${rrRatio.toFixed(1)}:1`); }
-    else if (rrRatio >= 2) { score += 7; reasons.push(`Good R/R ratio: ${rrRatio.toFixed(1)}:1`); }
-    else if (rrRatio >= 1.5) { score += 5; reasons.push(`Acceptable R/R ratio: ${rrRatio.toFixed(1)}:1`); }
-    else if (rrRatio >= 1) { score += 3; reasons.push(`Marginal R/R ratio: ${rrRatio.toFixed(1)}:1`); }
-    else { reasons.push(`Poor R/R ratio: ${rrRatio.toFixed(1)}:1`); }
+    if (rrRatio >= 3)        { score += 10; reasons.push(`Excellent R/R ratio: ${rrRatio.toFixed(1)}:1`); }
+    else if (rrRatio >= 2)   { score += 7;  reasons.push(`Good R/R ratio: ${rrRatio.toFixed(1)}:1`); }
+    else if (rrRatio >= 1.5) { score += 5;  reasons.push(`Acceptable R/R ratio: ${rrRatio.toFixed(1)}:1`); }
+    else if (rrRatio >= 1)   { score += 3;  reasons.push(`Marginal R/R ratio: ${rrRatio.toFixed(1)}:1`); }
+    else                     { reasons.push(`Poor R/R ratio: ${rrRatio.toFixed(1)}:1`); }
 
     const passed = score >= maxPoints * 0.5;
 

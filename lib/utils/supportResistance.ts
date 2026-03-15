@@ -10,7 +10,7 @@ export class SupportResistanceAnalyzer {
   static findPivotPoints(highs: number[], lows: number[], closes: number[], lookback: number = 5): PivotPoint[] {
     const pivots: PivotPoint[] = [];
 
-    // Find swing highs
+    // Find swing highs (resistance)
     for (let i = lookback; i < highs.length - lookback; i++) {
       const current = highs[i];
       let isSwingHigh = true;
@@ -27,12 +27,13 @@ export class SupportResistanceAnalyzer {
           price: current,
           index: i,
           type: 'resistance',
-          strength: this.calculatePivotStrength(highs, lows, i, lookback)
+          // Bug Fix #2 — pass type so calculatePivotStrength uses the correct array
+          strength: this.calculatePivotStrength(highs, lows, i, lookback, 'resistance'),
         });
       }
     }
 
-    // Find swing lows
+    // Find swing lows (support)
     for (let i = lookback; i < lows.length - lookback; i++) {
       const current = lows[i];
       let isSwingLow = true;
@@ -49,7 +50,8 @@ export class SupportResistanceAnalyzer {
           price: current,
           index: i,
           type: 'support',
-          strength: this.calculatePivotStrength(highs, lows, i, lookback)
+          // Bug Fix #2 — pass type so calculatePivotStrength uses lows array for support pivots
+          strength: this.calculatePivotStrength(highs, lows, i, lookback, 'support'),
         });
       }
     }
@@ -57,9 +59,23 @@ export class SupportResistanceAnalyzer {
     return pivots.sort((a, b) => b.strength - a.strength);
   }
 
-  private static calculatePivotStrength(highs: number[], lows: number[], index: number, lookback: number): number {
+  /**
+   * Bug Fix #2 — pivot strength: use the correct price array based on pivot type.
+   * Previously always used `highs[index] || lows[index]`, which gave the wrong
+   * pivotPrice when computing support strength (should use lows[index]).
+   */
+  private static calculatePivotStrength(
+    highs: number[],
+    lows: number[],
+    index: number,
+    lookback: number,
+    type: 'support' | 'resistance'
+  ): number {
     let strength = 1;
-    const pivotPrice = highs[index] || lows[index];
+    // Use the correct array for the pivot type
+    const pivotPrice = type === 'resistance' ? highs[index] : lows[index];
+    if (!pivotPrice) return strength;
+
     const tolerance = pivotPrice * 0.015;
 
     const recentBars = Math.min(30, highs.length);

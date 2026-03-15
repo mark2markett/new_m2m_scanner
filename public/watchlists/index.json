@@ -1,0 +1,26 @@
+[
+  {
+    "id": "sp500_all",
+    "name": "S&P 500 — All 503",
+    "description": "Full S&P 500 constituent list",
+    "file": null
+  },
+  {
+    "id": "sp500_top50",
+    "name": "S&P 500 — Top 50 by Market Cap",
+    "description": "50 largest S&P 500 companies by market cap",
+    "file": "sp500_top50.csv"
+  },
+  {
+    "id": "sp500_tech",
+    "name": "S&P 500 — Technology Sector",
+    "description": "Information Technology sector constituents",
+    "file": "sp500_tech.csv"
+  },
+  {
+    "id": "sp500_financials",
+    "name": "S&P 500 — Financials Sector",
+    "description": "Financials sector constituents",
+    "file": "sp500_financials.csv"
+  }
+]

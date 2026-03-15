@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { TrendingUp, TrendingDown, Minus, ChevronRight, ChevronDown } from 'lucide-react';
 import type { ScannerStockResult } from '@/lib/types';
+import { SpyRSBadge } from '@/components/SpyRSBadge';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
 interface ScannerTableProps {
@@ -47,6 +48,7 @@ function DesktopTable({ stocks, onSelectStock }: ScannerTableProps) {
               <th className="text-center px-4 py-3">Trend</th>
               <th className="text-right px-4 py-3">RSI</th>
               <th className="text-center px-4 py-3">MACD</th>
+              <th className="text-center px-4 py-3">vs SPY</th>
               <th className="text-center px-4 py-3">Status</th>
               <th className="px-4 py-3"></th>
             </tr>
@@ -90,6 +92,9 @@ function DesktopTable({ stocks, onSelectStock }: ScannerTableProps) {
                     <MacdBadge signal={stock.macdSignal} />
                   </td>
                   <td className="text-center px-4 py-3" onClick={() => onSelectStock(stock.symbol)}>
+                    <SpyRSBadge spyRS={stock.spyRS} compact />
+                  </td>
+                  <td className="text-center px-4 py-3" onClick={() => onSelectStock(stock.symbol)}>
                     <div className="flex items-center gap-1 justify-center">
                       {stock.publishable && (
                         <span className="inline-block px-2 py-0.5 bg-[#00E59B]/10 text-[#00E59B] text-xs rounded-full font-medium">
@@ -120,7 +125,7 @@ function DesktopTable({ stocks, onSelectStock }: ScannerTableProps) {
                 </tr>
                 {expandedRow === stock.symbol && stock.aiSummary && (
                   <tr key={`${stock.symbol}-expanded`} className="border-b border-[#1f2937]/50 bg-[#0a0e17]/50">
-                    <td colSpan={12} className="px-6 py-3">
+                    <td colSpan={13} className="px-6 py-3">
                       <div className="flex flex-col gap-1 text-xs">
                         <div className="flex items-start gap-4">
                           <div className="flex-1">
@@ -131,6 +136,11 @@ function DesktopTable({ stocks, onSelectStock }: ScannerTableProps) {
                             <span className="text-[#6B7280]">Risk: </span>
                             <span className="text-[#E5E7EB]">{stock.aiRisk}</span>
                           </div>
+                          {stock.spyRS && (
+                            <div className="shrink-0">
+                              <SpyRSBadge spyRS={stock.spyRS} />
+                            </div>
+                          )}
                           {stock.aiCatalystPresent && (
                             <span className="inline-block px-2 py-0.5 bg-[#8b5cf6]/10 text-[#8b5cf6] text-[10px] rounded-full font-medium">
                               CATALYST
@@ -204,7 +214,8 @@ function MobileCardList({ stocks, onSelectStock }: ScannerTableProps) {
                 <MacdBadge signal={stock.macdSignal} />
               </div>
             </div>
-            <ChevronRight className="h-4 w-4 text-[#374151]" />
+            {/* SPY RS badge on mobile */}
+            <SpyRSBadge spyRS={stock.spyRS} compact />
           </div>
         </div>
       ))}
@@ -224,8 +235,8 @@ function ChangeCell({ change }: { change: number }) {
 }
 
 function ScoreBar({ score, maxScore }: { score: number; maxScore: number }) {
-  const pct = maxScore > 0 ? (score / maxScore) * 100 : 0;
-  const color = pct >= 70 ? '#00E59B' : pct >= 40 ? '#f59e0b' : '#ef4444';
+  const pct = maxScore > 0 ? Math.min((score / maxScore) * 100, 100) : 0;
+  const color = pct >= 65 ? '#00E59B' : pct >= 45 ? '#f59e0b' : '#ef4444';
 
   return (
     <div className="flex items-center gap-2">

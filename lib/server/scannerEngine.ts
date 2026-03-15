@@ -6,11 +6,54 @@ import { PolygonService } from './polygonService';
 import { NewsService } from './newsService';
 import { OpenAIService } from './openaiService';
 import { assessQuality } from '@/lib/utils/qualityAssessment';
-import type { SP500Stock, ScannerStockResult } from '@/lib/types';
+import { calculateCompositeScore } from '@/lib/utils/scoringEngine';
+import { buildFundamentalData } from '@/lib/utils/fundamentalAnalysis';
+import type { SP500Stock, ScannerStockResult, SpyRelativeStrength } from '@/lib/types';
 
 const CONCURRENCY = 10;
 
-async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
+/**
+ * Compute SPY relative strength for 10, 20, and 50 trading-day windows.
+ * Returns null if SPY data is unavailable.
+ */
+async function computeSpyRS(
+  stockCloses: number[],
+  spyCloses: number[]
+): Promise<SpyRelativeStrength | null> {
+  try {
+    const periods = [10, 20, 50] as const;
+    const returns: Record<number, number> = {};
+
+    for (const p of periods) {
+      if (stockCloses.length < p + 1 || spyCloses.length < p + 1) return null;
+      const stockReturn = (stockCloses[stockCloses.length - 1] - stockCloses[stockCloses.length - 1 - p]) /
+                          stockCloses[stockCloses.length - 1 - p];
+      const spyReturn   = (spyCloses[spyCloses.length - 1]   - spyCloses[spyCloses.length - 1 - p]) /
+                          spyCloses[spyCloses.length - 1 - p];
+      // Relative strength ratio: >1 means stock outperforming SPY
+      returns[p] = spyReturn !== 0 ? (1 + stockReturn) / (1 + spyReturn) : 1;
+    }
+
+    const rs10d = returns[10];
+    const rs20d = returns[20];
+    const rs50d = returns[50];
+
+    // Label: leading if avg RS > 1.02, lagging if < 0.98, otherwise inline
+    const avgRS = (rs10d + rs20d + rs50d) / 3;
+    const label: SpyRelativeStrength['label'] =
+      avgRS > 1.02 ? 'leading' :
+      avgRS < 0.98 ? 'lagging' : 'inline';
+
+    return { rs10d, rs20d, rs50d, label };
+  } catch {
+    return null;
+  }
+}
+
+async function analyzeStock(
+  stock: SP500Stock,
+  spyCloses: number[]
+): Promise<ScannerStockResult> {
   const historicalLimit = 120;
   const newsLimit = 3;
 
@@ -33,6 +76,7 @@ async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
 
   const setupStage = TradeSetupAnalyzer.analyzeSetupStage(indicators, stockData.price, support, resistance, closes);
 
+  // Bug Fix #8: pass recentPrices for pullback penalty calculation
   const scorecard = TradeSetupAnalyzer.calculateM2MScorecard(
     indicators,
     setupStage,
@@ -41,7 +85,8 @@ async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
     stockData.price,
     support,
     resistance,
-    null // skip options data for scanner
+    null,   // skip options data for scanner
+    closes  // pass closes for pullback penalty
   );
 
   const macdSignal: 'bullish' | 'bearish' = indicators.macd.macd > indicators.macd.signal ? 'bullish' : 'bearish';
@@ -52,8 +97,31 @@ async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
     !ema20above50 && !priceAboveEma20 ? 'bearish' : 'neutral';
 
   const sentiment = newsData.length > 0
-    ? newsData.map(n => `${n.headline} (${n.sentiment})`).join('; ')
+    ? newsData.map((n: any) => `${n.headline} (${n.sentiment})`).join('; ')
     : 'No significant news';
+
+  // SPY Relative Strength
+  const spyRS = await computeSpyRS(closes, spyCloses);
+
+  // ── Composite Score (v2.0) ───────────────────────────────────────────────────
+  // Builds fundamental data from available stock details (peRatio, marketCap)
+  const fundamentalData = buildFundamentalData({
+    peRatio: stockData.peRatio,
+    marketCap: stockData.marketCap,
+    sector: stock.sector,
+  });
+
+  const compositeResult = calculateCompositeScore({
+    indicators,
+    scorecard,
+    fundamentalData,
+    news: newsData,
+    currentPrice: stockData.price,
+    volumes,
+    optionsData: null,  // options data not fetched in scanner (too many API calls)
+    spyRsLabel: spyRS?.label ?? null,
+  });
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Algorithmic scoring — deterministic, transparent, consistent across runs
   const quality = assessQuality(scorecard, indicators, setupStage, false);
@@ -95,6 +163,7 @@ async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
       totalFactors: scorecard.totalFactors,
       publishable: scorecard.publishable,
       sentiment,
+      spyRS,
     });
 
     aiKeySignal = insight.keySignal;
@@ -104,10 +173,10 @@ async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
     console.error(`[Scanner] AI narrative failed for ${stock.symbol}: ${err instanceof Error ? err.message : 'unknown'}`);
   }
 
-  // Build recommendation algorithmically (same logic as analysisEngine)
-  const scoreSummary = `M2M Score: ${scorecard.totalScore}/${scorecard.maxScore} (${scorecard.factorsPassed}/${scorecard.totalFactors} factors passed).`;
-  const recommendation = scorecard.publishable
-    ? `${scoreSummary} Setup signals aligned.`
+  // Build recommendation algorithmically (uses composite score for v2.0)
+  const scoreSummary = `Composite: ${compositeResult.score}/100 | M2M: ${scorecard.totalScore}/${scorecard.maxScore} (${scorecard.factorsPassed}/${scorecard.totalFactors} factors).`;
+  const recommendation = compositeResult.isPublishable
+    ? `${scoreSummary} Setup signals aligned. Tier: ${compositeResult.tier}.`
     : `${scoreSummary} Signals mixed or insufficient.`;
 
   return {
@@ -119,11 +188,20 @@ async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
     changePercent: stockData.changePercent,
     volume: stockData.volume,
     marketCap: stockData.marketCap,
+    // Legacy M2M fields (backwards compatibility)
     m2mScore: scorecard.totalScore,
     m2mMaxScore: scorecard.maxScore,
     factorsPassed: scorecard.factorsPassed,
     totalFactors: scorecard.totalFactors,
-    publishable: scorecard.publishable,
+    publishable: compositeResult.isPublishable,
+    // Composite score fields (v2.0)
+    compositeScore: compositeResult.score,
+    compositeTier: compositeResult.tier,
+    technicalScore: compositeResult.technicalScore,
+    fundamentalScore: compositeResult.fundamentalScore,
+    sentimentScore: compositeResult.sentimentScore,
+    setupDirection: compositeResult.direction,
+    // Setup metadata
     setupStage,
     volatilityRegime: indicatorResults.regime as string,
     rsi: indicators.rsi,
@@ -137,6 +215,7 @@ async function analyzeStock(stock: SP500Stock): Promise<ScannerStockResult> {
     aiRisk,
     aiCatalystPresent,
     aiSummary,
+    spyRS,
     partial: false,
     analyzedAt: new Date().toISOString(),
   };
@@ -157,6 +236,12 @@ function mapToErrorResult(stock: SP500Stock, error: string): ScannerStockResult 
     factorsPassed: 0,
     totalFactors: 0,
     publishable: false,
+    compositeScore: 0,
+    compositeTier: 'filtered',
+    technicalScore: 0,
+    fundamentalScore: 0,
+    sentimentScore: 0,
+    setupDirection: 'neutral',
     setupStage: 'Unknown',
     volatilityRegime: 'Normal',
     rsi: 0,
@@ -170,6 +255,7 @@ function mapToErrorResult(stock: SP500Stock, error: string): ScannerStockResult 
     aiRisk: '',
     aiCatalystPresent: false,
     aiSummary: '',
+    spyRS: null,
     partial: false,
     error,
     analyzedAt: new Date().toISOString(),
@@ -182,29 +268,48 @@ async function runWithConcurrency<T>(
   concurrency: number
 ): Promise<void> {
   const queue = [...items];
-  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (queue.length > 0) {
-      const item = queue.shift()!;
-      await fn(item);
+      const item = queue.shift();
+      if (item !== undefined) {
+        await fn(item);
+      }
     }
   });
   await Promise.all(workers);
 }
 
 export class ScannerEngine {
+  /**
+   * Analyze a batch of stocks. Fetches SPY closes once and shares them
+   * across all stock analyses in the batch for efficiency.
+   */
   static async analyzeBatch(stocks: SP500Stock[]): Promise<ScannerStockResult[]> {
+    // Fetch SPY data once for the entire batch
+    let spyCloses: number[] = [];
+    try {
+      const spyData = await PolygonService.getHistoricalData('SPY', 'day', 120);
+      spyCloses = spyData.map((d: any) => d.close);
+    } catch (err) {
+      console.warn('[Scanner] Could not fetch SPY data for RS computation:', err instanceof Error ? err.message : 'unknown');
+    }
+
     const results: ScannerStockResult[] = [];
 
-    await runWithConcurrency(stocks, async (stock) => {
-      try {
-        const result = await analyzeStock(stock);
-        results.push(result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Analysis failed';
-        console.error(`[Scanner] Failed to analyze ${stock.symbol}: ${message}`);
-        results.push(mapToErrorResult(stock, message));
-      }
-    }, CONCURRENCY);
+    await runWithConcurrency(
+      stocks,
+      async (stock) => {
+        try {
+          const result = await analyzeStock(stock, spyCloses);
+          results.push(result);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          console.error(`[Scanner] Failed to analyze ${stock.symbol}: ${msg}`);
+          results.push(mapToErrorResult(stock, msg));
+        }
+      },
+      CONCURRENCY
+    );
 
     return results;
   }

@@ -5,6 +5,7 @@ import { RefreshCw, Clock } from 'lucide-react';
 import { ScannerSummary } from '@/components/ScannerSummary';
 import { ScannerFilters, type ScannerFilterState } from '@/components/ScannerFilters';
 import { ScannerTable } from '@/components/ScannerTable';
+import { WatchlistSelector } from '@/components/WatchlistSelector';
 import type { ScannerResult, ScanBatchStatus, ScannerStockResult } from '@/lib/types';
 
 const SINGLE_STOCK_URL = 'https://singlestock.mark2markets.com';
@@ -14,6 +15,9 @@ export function ScannerPageClient() {
   const [status, setStatus] = useState<ScanBatchStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  /** Currently-selected watchlist id — drives both fetch & display */
+  const [selectedWatchlist, setSelectedWatchlist] = useState<string>('sp500_all');
 
   const [filters, setFilters] = useState<ScannerFilterState>({
     search: '',
@@ -28,18 +32,27 @@ export function ScannerPageClient() {
     minConfidence: 0,
   });
 
-  // Fetch results
-  const fetchResults = useCallback(async () => {
+  /**
+   * Fetch scan results, optionally filtered to a watchlist.
+   * The results API post-filters the stored full-scan by watchlist symbol set,
+   * so only symbols in the chosen list are returned.
+   */
+  const fetchResults = useCallback(async (watchlistId?: string) => {
+    const wl = watchlistId ?? selectedWatchlist;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/scanner/results');
+      const params = new URLSearchParams();
+      if (wl && wl !== 'sp500_all') params.set('watchlist', wl);
+      const url = `/api/scanner/results${params.toString() ? '?' + params.toString() : ''}`;
+
+      const res = await fetch(url);
       if (res.ok) {
         const data: ScannerResult = await res.json();
         setResult(data);
         setStatus(null);
       } else if (res.status === 404) {
-        // No results yet, check status
+        // No results yet — check whether a scan is running
         const statusRes = await fetch('/api/scanner/status');
         if (statusRes.ok) {
           setStatus(await statusRes.json());
@@ -52,11 +65,13 @@ export function ScannerPageClient() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedWatchlist]);
 
+  // Initial load
   useEffect(() => {
-    fetchResults();
-  }, [fetchResults]);
+    fetchResults(selectedWatchlist);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWatchlist]);
 
   // Poll status if scan is running
   useEffect(() => {
@@ -70,16 +85,22 @@ export function ScannerPageClient() {
           setStatus(newStatus);
           if (newStatus.status === 'completed') {
             clearInterval(interval);
-            fetchResults();
+            fetchResults(selectedWatchlist);
           }
         }
       } catch { /* ignore */ }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [status, fetchResults]);
+  }, [status, fetchResults, selectedWatchlist]);
 
-  // Extract unique sectors and stages from result
+  /** When the user picks a different watchlist, re-fetch immediately. */
+  const handleWatchlistChange = useCallback((id: string) => {
+    setSelectedWatchlist(id);
+    // fetchResults is triggered by the useEffect on selectedWatchlist
+  }, []);
+
+  // Extract unique sectors and stages from current result slice
   const { sectors, stages } = useMemo(() => {
     if (!result?.stocks) return { sectors: [], stages: [] };
     const sectorSet = new Set<string>();
@@ -177,7 +198,7 @@ export function ScannerPageClient() {
                 </div>
               )}
               <button
-                onClick={fetchResults}
+                onClick={() => fetchResults(selectedWatchlist)}
                 disabled={loading}
                 className="p-2 text-[#6B7280] hover:text-[#00E59B] transition-colors disabled:opacity-50"
               >
@@ -225,7 +246,7 @@ export function ScannerPageClient() {
           <div className="bg-[#111827] border border-[#ef4444]/30 rounded-xl p-6 text-center">
             <p className="text-[#ef4444] mb-2">{error}</p>
             <button
-              onClick={fetchResults}
+              onClick={() => fetchResults(selectedWatchlist)}
               className="text-sm text-[#00E59B] hover:underline"
             >
               Try again
@@ -248,6 +269,14 @@ export function ScannerPageClient() {
         {result && (
           <>
             <ScannerSummary result={result} />
+
+            {/* Watchlist selector + filter bar */}
+            <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+              <WatchlistSelector
+                selectedId={selectedWatchlist}
+                onChange={handleWatchlistChange}
+              />
+            </div>
 
             <ScannerFilters
               filters={filters}
@@ -274,7 +303,7 @@ function formatDate(iso: string): string {
   try {
     const d = new Date(iso);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-      ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   } catch {
     return iso;
   }

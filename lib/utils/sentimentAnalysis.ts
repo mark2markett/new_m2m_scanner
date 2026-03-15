@@ -1,13 +1,26 @@
 import type { NewsItem } from '@/lib/types';
 
 export function analyzeSentimentFromTitle(title: string): 'Positive' | 'Negative' | 'Neutral' {
-  const positiveWords = ['beats', 'exceeds', 'strong', 'growth', 'up', 'gains', 'bullish', 'upgrade', 'buy', 'outperforms', 'record', 'high'];
-  const negativeWords = ['misses', 'falls', 'down', 'drops', 'weak', 'decline', 'bearish', 'downgrade', 'sell', 'loss', 'low', 'concern'];
+  const positiveWords = [
+    'beats', 'exceeds', 'strong', 'growth', 'gains', 'bullish', 'upgrade',
+    'buy', 'outperforms', 'record', 'high',
+  ];
+  const negativeWords = [
+    'misses', 'falls', 'drops', 'weak', 'decline', 'bearish', 'downgrade',
+    'sell', 'loss', 'low', 'concern',
+  ];
 
   const lowerTitle = title.toLowerCase();
 
-  const positiveCount = positiveWords.filter(word => lowerTitle.includes(word)).length;
-  const negativeCount = negativeWords.filter(word => lowerTitle.includes(word)).length;
+  // Bug Fix #6: use word-boundary matching to avoid partial-word false positives
+  // (e.g. "up" inside "support", "down" inside "markdown", "high" inside "highlight")
+  const matchesWord = (text: string, word: string): boolean => {
+    const re = new RegExp(`(?<![a-z])${word}(?![a-z])`, 'i');
+    return re.test(text);
+  };
+
+  const positiveCount = positiveWords.filter(w => matchesWord(lowerTitle, w)).length;
+  const negativeCount = negativeWords.filter(w => matchesWord(lowerTitle, w)).length;
 
   if (positiveCount > negativeCount) return 'Positive';
   if (negativeCount > positiveCount) return 'Negative';

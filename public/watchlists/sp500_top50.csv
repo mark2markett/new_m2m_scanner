@@ -1,0 +1,51 @@
+symbol,name,sector
+AAPL,Apple Inc.,Information Technology
+MSFT,Microsoft Corporation,Information Technology
+NVDA,NVIDIA Corporation,Information Technology
+AMZN,Amazon.com Inc.,Consumer Discretionary
+GOOGL,Alphabet Inc. Class A,Communication Services
+GOOG,Alphabet Inc. Class C,Communication Services
+META,Meta Platforms Inc.,Communication Services
+BRK.B,Berkshire Hathaway Inc. Class B,Financials
+TSLA,Tesla Inc.,Consumer Discretionary
+AVGO,Broadcom Inc.,Information Technology
+JPM,JPMorgan Chase & Co.,Financials
+LLY,Eli Lilly and Company,Health Care
+UNH,UnitedHealth Group Incorporated,Health Care
+COST,Costco Wholesale Corporation,Consumer Staples
+V,Visa Inc.,Financials
+MA,Mastercard Incorporated,Financials
+HD,The Home Depot Inc.,Consumer Discretionary
+WMT,Walmart Inc.,Consumer Staples
+NFLX,Netflix Inc.,Communication Services
+ORCL,Oracle Corporation,Information Technology
+CRM,Salesforce Inc.,Information Technology
+BAC,Bank of America Corporation,Financials
+ABBV,AbbVie Inc.,Health Care
+AMD,Advanced Micro Devices Inc.,Information Technology
+QCOM,QUALCOMM Incorporated,Information Technology
+PEP,PepsiCo Inc.,Consumer Staples
+KO,The Coca-Cola Company,Consumer Staples
+ADBE,Adobe Inc.,Information Technology
+AMAT,Applied Materials Inc.,Information Technology
+INTU,Intuit Inc.,Information Technology
+TMO,Thermo Fisher Scientific Inc.,Health Care
+GS,The Goldman Sachs Group Inc.,Financials
+BX,Blackstone Inc.,Financials
+CSCO,Cisco Systems Inc.,Information Technology
+PFE,Pfizer Inc.,Health Care
+MRK,Merck & Co. Inc.,Health Care
+DIS,The Walt Disney Company,Communication Services
+ACN,Accenture plc,Information Technology
+ABT,Abbott Laboratories,Health Care
+TXN,Texas Instruments Incorporated,Information Technology
+LOW,Lowe's Companies Inc.,Consumer Discretionary
+CAT,Caterpillar Inc.,Industrials
+RTX,RTX Corporation,Industrials
+NOW,ServiceNow Inc.,Information Technology
+UNP,Union Pacific Corporation,Industrials
+GE,GE Aerospace,Industrials
+SPGI,S&P Global Inc.,Financials
+BKNG,Booking Holdings Inc.,Consumer Discretionary
+ISRG,Intuitive Surgical Inc.,Health Care
+AXP,American Express Company,Financials
