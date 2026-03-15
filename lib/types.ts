@@ -160,57 +160,48 @@ export interface CompositeScore {
   isPublishable: boolean;
 }
 
-// --- Backtesting / Performance Tracking Types ---
+// --- Backtesting Types ---
 
-export interface SetupTrackingEntry {
+export interface BacktestSetup {
   symbol: string;
   scanDate: string;
   entryPrice: number;
-  compositeScore: number;
-  confidenceTier: ConfidenceTier;
-  direction: SetupDirection;
+  stopLoss: number;
   target1: number;
   target2: number;
-  stopLoss: number;
-  rr1: number;
-  rr2: number;
+  direction: SetupDirection;
+  compositeScore: number;
   setupStage: string;
-  technicalScore: number;
-  fundamentalScore: number;
-  sentimentScore: number;
 }
 
-export interface SetupResolution {
-  symbol: string;
-  scanDate: string;
-  resolvedAt: string;
-  outcome: 'win' | 'loss' | 'open';
+export interface BacktestResult {
+  setup: BacktestSetup;
   exitPrice: number;
-  returnPct: number;
-  daysHeld: number;
+  exitDate: string;
+  holdingDays: number;
+  pnlPct: number;
+  outcome: 'win' | 'loss' | 'breakeven';
+  maxFavorableExcursion: number;
+  maxAdverseExcursion: number;
 }
 
-export interface PerformanceSummary {
-  totalTracked: number;
-  totalResolved: number;
-  wins: number;
-  losses: number;
-  open: number;
-  winRate: number;           // 0–100 percentage
-  avgWinPct: number;
-  avgLossPct: number;
-  profitFactor: number;      // avgWin / avgLoss
-  targetWinRate: number;     // 75 (the 75% target)
-  meetsTarget: boolean;
-}
-
-// --- Scanner Types ---
+// --- Stock / Watchlist Types ---
 
 export interface SP500Stock {
   symbol: string;
   name: string;
   sector: string;
 }
+
+export interface WatchlistMeta {
+  id: string;
+  name: string;
+  description: string;
+  count: number;
+  isCustom?: boolean;
+}
+
+// --- Scanner Result Types ---
 
 export interface ScannerStockResult {
   symbol: string;
@@ -221,38 +212,81 @@ export interface ScannerStockResult {
   changePercent: number;
   volume: number;
   marketCap: number;
-  // Legacy M2M 5-factor fields (kept for backwards compatibility)
+
+  // M2M 5-factor scorecard result
   m2mScore: number;
   m2mMaxScore: number;
+  /** Number of M2M factors that passed */
   factorsPassed: number;
+  /** Total number of M2M factors evaluated */
   totalFactors: number;
   publishable: boolean;
-  // Composite score fields (v2.0+)
-  compositeScore?: number;
-  compositeTier?: ConfidenceTier;
-  technicalScore?: number;
-  fundamentalScore?: number;
-  sentimentScore?: number;
-  setupDirection?: SetupDirection;
-  // Setup metadata
+
+  // Composite score (TA + FA + SA)
+  compositeScore: number;
+  compositeTier: ConfidenceTier;
+  /** Directional bias from composite score */
+  setupDirection: SetupDirection;
+  technicalScore: number;
+  fundamentalScore: number;
+  sentimentScore: number;
+
+  // Setup classification
   setupStage: string;
+  trendAlignment: 'bullish' | 'bearish' | 'neutral';
   volatilityRegime: string;
+
+  // Technical indicators snapshot
   rsi: number;
   macdSignal: 'bullish' | 'bearish';
-  trendAlignment: 'bullish' | 'bearish' | 'neutral';
-  recommendation: string;
+  macdHistogram?: number;
+  ema20?: number;
+  ema50?: number;
+  adx?: number;
+  atr?: number;
+  stochK?: number;
+  stochD?: number;
+  cmf?: number;
+  bbUpper?: number;
+  bbLower?: number;
+
+  // Support / resistance (optional — not always populated by scanner)
+  support?: number[];
+  resistance?: number[];
+
   // AI quality assessment
   aiSetupQuality: 'high' | 'moderate' | 'low';
+  /** Signal confidence score 0-100 */
   aiConfidence: number;
   aiEarlyStage: boolean;
-  aiKeySignal: string;
-  aiRisk: string;
   aiCatalystPresent: boolean;
-  aiSummary: string;
+
+  // Algorithmic recommendation string
+  recommendation: string;
+
+  // News/sentiment summary string
+  sentiment?: string;
+
+  // AI narrative (GPT-4o)
+  aiKeySignal?: string;
+  aiRisk?: string;
+  aiSummary?: string;
+
+  // SPY relative strength
   spyRS?: SpyRelativeStrength | null;
+
+  // Scan metadata
   partial: boolean;
-  error?: string;
   analyzedAt: string;
+
+  // Backward-compat aliases (may be present in older cached scan data)
+  m2mFactorsPassed?: number;
+  m2mTotalFactors?: number;
+  compositeDirection?: SetupDirection;
+  aiSignalConfidence?: number;
+
+  // Error handling
+  error?: string;
 }
 
 export interface ScannerResult {
@@ -263,11 +297,15 @@ export interface ScannerResult {
   successCount: number;
   errorCount: number;
   stocks: ScannerStockResult[];
+
+  // Quick-access symbol lists
   topByScore: string[];
   justTriggered: string[];
   publishable: string[];
   earlyStage: string[];
   highQuality: string[];
+
+  // Sector breakdown
   bySector: Record<string, number>;
 }
 
@@ -276,266 +314,161 @@ export interface ScanBatchStatus {
   totalBatches: number;
   completedBatches: number;
   currentBatch: number;
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'error';
   stocksProcessed: number;
   totalStocks: number;
   startedAt: string;
   lastUpdatedAt: string;
+  error?: string;
 }
 
-// --- Watchlist Types ---
+// ─── Authentication & User Types ────────────────────────────────────────────
 
-export interface WatchlistStock {
-  symbol: string;
-  name: string;
-  sector: string;
-}
+export type UserRole = 'admin' | 'user';
+export type AuthProvider = 'credentials' | 'google' | 'github';
 
-export interface WatchlistMeta {
+export interface User {
   id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  provider: AuthProvider;
+  /** bcrypt hash — never returned in API responses */
+  passwordHash?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
+}
+
+/** Safe subset of User returned to clients — no password hash */
+export type PublicUser = Omit<User, 'passwordHash'>;
+
+export interface AuthTokenPayload {
+  sub: string;          // user id
+  email: string;
+  name: string;
+  role: UserRole;
+  iat?: number;
+  exp?: number;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  name: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: PublicUser;
+  expiresAt: string;
+}
+
+// ─── Custom Watchlist Types (user-managed) ──────────────────────────────────
+
+export interface CustomWatchlist {
+  id: string;
+  userId: string;
+  name: string;
+  description: string;
+  symbols: string[];          // uppercase ticker symbols
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWatchlistRequest {
   name: string;
   description?: string;
-  count: number;
+  symbols: string[];
 }
 
-// ─── Data Pipeline Types ──────────────────────────────────────────────────────
-
-/**
- * Raw OHLCV bar from Polygon aggregates endpoint.
- */
-export interface OHLCVBar {
-  timestamp: string;      // ISO 8601
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  vwap?: number;          // Volume-weighted average price
-  transactions?: number;  // Number of trades in bar
-}
-
-/**
- * Live quote snapshot for a single ticker.
- */
-export interface QuoteSnapshot {
-  symbol: string;
-  price: number;           // Last trade price
-  bid: number;
-  ask: number;
-  bidSize: number;
-  askSize: number;
-  lastSize: number;        // Last trade size
-  open: number;            // Day open
-  high: number;            // Day high
-  low: number;             // Day low
-  close: number;           // Previous day close (for change calc)
-  volume: number;          // Day volume
-  vwap: number;
-  change: number;
-  changePercent: number;
-  afterHoursPrice?: number;
-  preMarketPrice?: number;
-  timestamp: string;       // Last update ISO 8601
-  marketStatus: 'open' | 'closed' | 'pre' | 'after' | 'unknown';
-}
-
-/**
- * Financial statement data from Polygon fundamentals.
- */
-export interface FinancialStatement {
-  symbol: string;
-  period: string;         // e.g. 'Q3 2024', 'FY 2023'
-  periodType: 'quarterly' | 'annual';
-  fiscalYear: number;
-  fiscalPeriod: string;   // e.g. 'Q3', 'FY'
-  filedAt?: string;
-  // Income statement
-  revenue?: number;
-  revenueGrowthYoY?: number;
-  grossProfit?: number;
-  grossMargin?: number;
-  operatingIncome?: number;
-  operatingMargin?: number;
-  netIncome?: number;
-  netMargin?: number;
-  eps?: number;
-  epsGrowthYoY?: number;
-  // Balance sheet
-  totalAssets?: number;
-  totalLiabilities?: number;
-  totalEquity?: number;
-  debtToEquity?: number;
-  currentRatio?: number;
-  // Cash flow
-  freeCashFlow?: number;
-  operatingCashFlow?: number;
-  // Valuation
-  peRatio?: number;
-  psRatio?: number;        // Price/Sales
-  pbRatio?: number;        // Price/Book
-  evToEbitda?: number;
-  marketCap?: number;
-  sharesOutstanding?: number;
-}
-
-/**
- * Ticker details from Polygon reference API.
- */
-export interface TickerDetails {
-  symbol: string;
-  name: string;
+export interface UpdateWatchlistRequest {
+  name?: string;
   description?: string;
-  sector?: string;
-  industry?: string;
-  exchange?: string;
-  marketCap?: number;
-  sharesOutstanding?: number;
-  employees?: number;
-  ceo?: string;
-  address?: string;
-  phone?: string;
-  website?: string;
-  listingDate?: string;
-  currency: string;
-  active: boolean;
-  // SIC classification
-  sicCode?: string;
-  sicDescription?: string;
-  // Index membership
-  primaryExchange?: string;
+  symbols?: string[];
 }
 
+// ─── Historical Performance Tracking Types ───────────────────────────────────
+
 /**
- * Symbol record stored in the symbol management layer.
+ * Represents a single tracked setup — recorded when a high-confidence
+ * (compositeScore ≥ 75) setup is identified by the scanner.
  */
-export interface SymbolRecord {
+export interface TrackedSetup {
+  id: string;                         // uuid
+  userId: string;                     // who is tracking
   symbol: string;
-  name: string;
+  scanDate: string;                   // date setup was identified (YYYY-MM-DD)
+  trackedAt: string;                  // ISO timestamp of tracking event
+  direction: SetupDirection;
+  compositeScore: number;             // score at time of identification
+  entryPrice: number;                 // price at scan time
+  setupStage: string;
+  technicalScore: number;
+  fundamentalScore: number;
+  sentimentScore: number;
   sector: string;
-  industry?: string;
-  exchange?: string;
-  marketCap?: number;
-  active: boolean;
-  inSP500: boolean;
-  lastVerified: string;   // ISO 8601
-  addedAt: string;        // ISO 8601
+  aiSummary?: string;
+  notes?: string;                     // user notes
+  status: 'open' | 'closed';
 }
 
 /**
- * Result of a data ingestion run for a single symbol.
+ * Outcome recorded when a tracked setup is closed out.
  */
-export interface IngestionResult {
-  symbol: string;
-  success: boolean;
-  dataTypes: IngestionDataType[];
-  failedDataTypes: IngestionDataType[];
-  errors: string[];
-  duration: number;       // ms
-  timestamp: string;
+export interface SetupOutcome {
+  id: string;                         // matches TrackedSetup.id
+  exitPrice: number;
+  exitDate: string;                   // YYYY-MM-DD
+  holdingDays: number;
+  pnlPct: number;                     // (exitPrice - entryPrice) / entryPrice * 100
+  outcome: 'win' | 'loss' | 'breakeven';
+  notes?: string;
 }
 
 /**
- * Types of data that can be ingested per symbol.
+ * A TrackedSetup merged with its outcome (if closed).
  */
-export type IngestionDataType =
-  | 'quote'
-  | 'ohlcv_daily'
-  | 'ohlcv_weekly'
-  | 'fundamentals'
-  | 'financials'
-  | 'options'
-  | 'news'
-  | 'ticker_details';
-
-/**
- * Summary of a full data ingestion pipeline run.
- */
-export interface IngestionSummary {
-  runId: string;
-  startedAt: string;
-  completedAt: string;
-  symbolsAttempted: number;
-  symbolsSucceeded: number;
-  symbolsFailed: number;
-  dataTypesIngested: IngestionDataType[];
-  totalApiCalls: number;
-  totalErrors: number;
-  avgDurationMs: number;
-  rateLimitHits: number;
+export interface PerformanceRecord extends TrackedSetup {
+  outcome?: SetupOutcome;
 }
 
 /**
- * Polygon API rate-limit configuration.
+ * Aggregate statistics across all tracked setups for a user or scanner-wide.
  */
-export interface RateLimitConfig {
-  /** Maximum requests per minute (depends on Polygon plan) */
-  requestsPerMinute: number;
-  /** Delay between requests in ms */
-  delayBetweenRequestsMs: number;
-  /** Max retries on 429 */
-  maxRetries: number;
-  /** Base backoff ms (doubles per retry) */
-  backoffBaseMs: number;
-}
-
-/**
- * Market status from Polygon.
- */
-export interface MarketStatus {
-  market: 'open' | 'closed' | 'extended-hours';
-  serverTime: string;
-  exchanges: {
-    nyse?: string;
-    nasdaq?: string;
-    otc?: string;
+export interface PerformanceSummary {
+  totalSetups: number;
+  openSetups: number;
+  closedSetups: number;
+  wins: number;
+  losses: number;
+  breakevens: number;
+  winRate: number;                    // wins / closedSetups (0–1)
+  avgPnlPct: number;                  // average P&L % across closed setups
+  avgHoldingDays: number;
+  avgCompositeScore: number;
+  /** Win rate for setups with compositeScore ≥ 75 (primary KPI) */
+  highConfidenceWinRate: number;
+  /** Breakdown by direction */
+  byDirection: {
+    bullish: { total: number; wins: number; winRate: number };
+    bearish: { total: number; wins: number; winRate: number };
+    neutral: { total: number; wins: number; winRate: number };
   };
-  currencies: {
-    fx?: string;
-    crypto?: string;
-  };
-  earlyHours: boolean;
-  afterHours: boolean;
-}
-
-/**
- * Data health check result for a single data source.
- */
-export interface DataHealthCheck {
-  source: string;
-  status: 'healthy' | 'degraded' | 'error';
-  latencyMs: number;
-  lastSuccessAt?: string;
-  errorMessage?: string;
-  details?: Record<string, unknown>;
-}
-
-/**
- * Full data pipeline health report.
- */
-export interface DataPipelineHealth {
-  overallStatus: 'healthy' | 'degraded' | 'error';
-  checkedAt: string;
-  apiKeyConfigured: boolean;
-  redisConfigured: boolean;
-  checks: DataHealthCheck[];
-}
-
-/**
- * Options chain summary from Polygon snapshot.
- */
-export interface OptionsChainSummary {
-  symbol: string;
-  underlyingPrice: number;
-  timestamp: string;
-  expirations: string[];          // Available expiration dates
-  totalContracts: number;
-  callContracts: number;
-  putContracts: number;
-  putCallRatio: number;
-  totalCallVolume: number;
-  totalPutVolume: number;
-  totalCallOI: number;
-  totalPutOI: number;
-  avgIV: number;                  // Average implied volatility
-  contracts: OptionContract[];
+  /** Breakdown by sector */
+  bySector: Record<string, { total: number; wins: number; winRate: number }>;
+  /** Monthly rolling performance */
+  byMonth: Array<{
+    month: string;        // YYYY-MM
+    total: number;
+    wins: number;
+    winRate: number;
+    avgPnlPct: number;
+  }>;
+  calculatedAt: string;
 }

@@ -125,26 +125,39 @@ export class SupportResistanceAnalyzer {
     return clustered;
   }
 
-  static getKeyLevels(pivots: PivotPoint[], currentPrice: number): { support: number[]; resistance: number[] } {
+  /**
+   * Return up to 5 clustered support and resistance levels relevant to the current price.
+   *
+   * Support levels: pivot lows below current price, sorted descending (nearest first).
+   * Resistance levels: pivot highs above current price, sorted ascending (nearest first).
+   */
+  static getKeyLevels(
+    pivots: PivotPoint[],
+    currentPrice: number
+  ): { support: number[]; resistance: number[] } {
+    const maxLevels = 5;
+
     const supportPrices = pivots
-      .filter(p => p.type === 'support' && p.price < currentPrice * 0.99)
+      .filter(p => p.type === 'support' && p.price < currentPrice)
       .map(p => p.price);
 
     const resistancePrices = pivots
-      .filter(p => p.type === 'resistance' && p.price > currentPrice * 1.01)
+      .filter(p => p.type === 'resistance' && p.price > currentPrice)
       .map(p => p.price);
 
-    const clusteredSupport = this.clusterLevels(supportPrices, 0.015);
-    const clusteredResistance = this.clusterLevels(resistancePrices, 0.015);
+    const clusteredSupport    = this.clusterLevels(supportPrices);
+    const clusteredResistance = this.clusterLevels(resistancePrices);
 
-    const supportLevels = clusteredSupport
-      .sort((a, b) => Math.abs(b - currentPrice) - Math.abs(a - currentPrice))
-      .slice(0, 3);
+    // Support: highest levels first (nearest to price)
+    const support = clusteredSupport
+      .sort((a, b) => b - a)
+      .slice(0, maxLevels);
 
-    const resistanceLevels = clusteredResistance
-      .sort((a, b) => Math.abs(a - currentPrice) - Math.abs(b - currentPrice))
-      .slice(0, 3);
+    // Resistance: lowest levels first (nearest to price)
+    const resistance = clusteredResistance
+      .sort((a, b) => a - b)
+      .slice(0, maxLevels);
 
-    return { support: supportLevels, resistance: resistanceLevels };
+    return { support, resistance };
   }
 }

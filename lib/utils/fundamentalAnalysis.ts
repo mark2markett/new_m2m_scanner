@@ -60,7 +60,7 @@ function scoreValuation(data: FundamentalData): { score: number; rationale: stri
   }
 
   // Sector momentum placeholder (up to 10 pts)
-  // Note: Full sector momentum requires sector return data; defaults to neutral
+  // Full sector momentum requires sector return data — defaults to neutral
   // until sector rotation module is implemented (v2.1 planned enhancement)
   score += 5;
   reasons.push('Sector momentum — neutral (sector rotation data pending)');
@@ -94,28 +94,28 @@ function scoreGrowth(data: FundamentalData): { score: number; rationale: string[
       reasons.push(`Revenue growth ${revPct.toFixed(1)}% YoY — slow growth`);
     } else {
       score += 1;
-      reasons.push(`Revenue decline ${revPct.toFixed(1)}% YoY — contraction`);
+      reasons.push(`Revenue decline ${Math.abs(revPct).toFixed(1)}% YoY — headwind`);
     }
   }
 
   // EPS Growth YoY (up to 15 pts)
   if (data.epsGrowthYoY === undefined || data.epsGrowthYoY === null) {
-    score += 7; // neutral fallback
+    score += 6; // neutral fallback
     reasons.push('EPS growth unavailable — neutral score applied');
   } else {
     const epsPct = data.epsGrowthYoY * 100;
-    if (epsPct >= 15) {
+    if (epsPct >= 25) {
       score += 15;
-      reasons.push(`EPS growth ${epsPct.toFixed(1)}% YoY — strong earnings momentum`);
-    } else if (epsPct >= 5) {
+      reasons.push(`EPS growth ${epsPct.toFixed(1)}% YoY — strong earnings`);
+    } else if (epsPct >= 10) {
       score += 10;
-      reasons.push(`EPS growth ${epsPct.toFixed(1)}% YoY — positive earnings trend`);
+      reasons.push(`EPS growth ${epsPct.toFixed(1)}% YoY — solid earnings`);
     } else if (epsPct >= 0) {
       score += 5;
       reasons.push(`EPS growth ${epsPct.toFixed(1)}% YoY — flat earnings`);
     } else {
       score += 1;
-      reasons.push(`EPS decline ${epsPct.toFixed(1)}% YoY — earnings contraction`);
+      reasons.push(`EPS decline ${Math.abs(epsPct).toFixed(1)}% YoY — earnings pressure`);
     }
   }
 
@@ -124,46 +124,49 @@ function scoreGrowth(data: FundamentalData): { score: number; rationale: string[
 
 // ─── Financial Health (25 pts) ───────────────────────────────────────────────
 
-function scoreFinancialHealth(data: FundamentalData): { score: number; rationale: string[] } {
+function scoreHealth(data: FundamentalData): { score: number; rationale: string[] } {
   const reasons: string[] = [];
   let score = 0;
 
-  // Debt-to-Equity (up to 15 pts)
+  // Debt-to-Equity (up to 12 pts)
   if (data.debtToEquity === undefined || data.debtToEquity === null) {
-    score += 8; // neutral fallback
-    reasons.push('Debt/Equity unavailable — neutral score applied');
+    score += 6; // neutral fallback
+    reasons.push('Debt/equity unavailable — neutral score applied');
   } else if (data.debtToEquity < 0.5) {
-    score += 15;
-    reasons.push(`D/E ${data.debtToEquity.toFixed(2)} — low leverage`);
-  } else if (data.debtToEquity < 1.5) {
-    score += 10;
-    reasons.push(`D/E ${data.debtToEquity.toFixed(2)} — moderate leverage`);
-  } else if (data.debtToEquity < 3.0) {
+    score += 12;
+    reasons.push(`D/E ${data.debtToEquity.toFixed(2)}x — low leverage, strong balance sheet`);
+  } else if (data.debtToEquity < 1.0) {
+    score += 9;
+    reasons.push(`D/E ${data.debtToEquity.toFixed(2)}x — moderate leverage`);
+  } else if (data.debtToEquity < 2.0) {
     score += 5;
-    reasons.push(`D/E ${data.debtToEquity.toFixed(2)} — high leverage`);
+    reasons.push(`D/E ${data.debtToEquity.toFixed(2)}x — elevated leverage`);
   } else {
     score += 1;
-    reasons.push(`D/E ${data.debtToEquity.toFixed(2)} — distressed leverage level`);
+    reasons.push(`D/E ${data.debtToEquity.toFixed(2)}x — high leverage, financial risk`);
   }
 
-  // Profit Margin (up to 10 pts)
+  // Profit Margin (up to 13 pts)
   if (data.profitMargin === undefined || data.profitMargin === null) {
-    score += 5; // neutral fallback
+    score += 6; // neutral fallback
     reasons.push('Profit margin unavailable — neutral score applied');
   } else {
     const marginPct = data.profitMargin * 100;
     if (marginPct >= 20) {
-      score += 10;
-      reasons.push(`Profit margin ${marginPct.toFixed(1)}% — high-margin business`);
+      score += 13;
+      reasons.push(`Net margin ${marginPct.toFixed(1)}% — high profitability`);
     } else if (marginPct >= 10) {
-      score += 7;
-      reasons.push(`Profit margin ${marginPct.toFixed(1)}% — solid margins`);
+      score += 9;
+      reasons.push(`Net margin ${marginPct.toFixed(1)}% — healthy profitability`);
     } else if (marginPct >= 5) {
-      score += 4;
-      reasons.push(`Profit margin ${marginPct.toFixed(1)}% — thin margins`);
+      score += 6;
+      reasons.push(`Net margin ${marginPct.toFixed(1)}% — thin margins`);
+    } else if (marginPct >= 0) {
+      score += 3;
+      reasons.push(`Net margin ${marginPct.toFixed(1)}% — minimal profitability`);
     } else {
       score += 1;
-      reasons.push(`Profit margin ${marginPct.toFixed(1)}% — very thin or negative`);
+      reasons.push(`Net margin ${marginPct.toFixed(1)}% — unprofitable`);
     }
   }
 
@@ -173,24 +176,26 @@ function scoreFinancialHealth(data: FundamentalData): { score: number; rationale
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Calculate the fundamental scorecard for a stock.
- * Returns a score of 0–100 with sub-scores for each dimension.
- * All fields degrade gracefully to neutral when data is unavailable.
+ * Calculate the fundamental score (0–100) for a stock.
+ * Used by the composite scoring engine.
  */
 export function calculateFundamentalScore(data: FundamentalData): FundamentalScorecard {
   const valuation = scoreValuation(data);
-  const growth = scoreGrowth(data);
-  const health = scoreFinancialHealth(data);
+  const growth    = scoreGrowth(data);
+  const health    = scoreHealth(data);
 
   const totalScore = valuation.score + growth.score + health.score;
+  const maxScore   = 100; // 40 + 35 + 25
 
-  // Determine if meaningful fundamental data was actually provided
-  const dataAvailable =
-    (data.peRatio !== undefined && data.peRatio !== null) ||
-    (data.revenueGrowthYoY !== undefined && data.revenueGrowthYoY !== null) ||
-    (data.epsGrowthYoY !== undefined && data.epsGrowthYoY !== null) ||
-    (data.debtToEquity !== undefined && data.debtToEquity !== null) ||
-    (data.profitMargin !== undefined && data.profitMargin !== null);
+  // Data availability check: if all three optional fields are missing, flag as unavailable
+  const dataAvailable = (
+    data.peRatio !== undefined ||
+    data.marketCap !== undefined ||
+    data.revenueGrowthYoY !== undefined ||
+    data.epsGrowthYoY !== undefined ||
+    data.debtToEquity !== undefined ||
+    data.profitMargin !== undefined
+  );
 
   const allRationale = [
     ...valuation.rationale,
@@ -199,18 +204,19 @@ export function calculateFundamentalScore(data: FundamentalData): FundamentalSco
   ].join('; ');
 
   return {
-    totalScore: Math.min(totalScore, 100),
+    totalScore: Math.min(Math.round((totalScore / maxScore) * 100), 100),
     dataAvailable,
     valuationScore: valuation.score,
-    growthScore: growth.score,
-    healthScore: health.score,
-    rationale: allRationale,
+    growthScore:    growth.score,
+    healthScore:    health.score,
+    rationale:      allRationale,
   };
 }
 
 /**
  * Build a FundamentalData object from the stock details returned by PolygonService.
- * Maps available Polygon fields; leaves undefined when data is missing.
+ * Maps the flat stock data into the structured FundamentalData type.
+ * Growth/health data is unavailable from the free Polygon tier and degrades to neutral.
  */
 export function buildFundamentalData(stockDetails: {
   peRatio?: number;
@@ -218,14 +224,15 @@ export function buildFundamentalData(stockDetails: {
   sector?: string;
 }): FundamentalData {
   return {
-    peRatio: stockDetails.peRatio || undefined,
-    marketCap: stockDetails.marketCap || undefined,
-    sector: stockDetails.sector || undefined,
-    // Revenue/EPS growth and D/E require premium data endpoints
-    // These will be populated as data integrations expand
+    peRatio:          stockDetails.peRatio   && stockDetails.peRatio > 0 ? stockDetails.peRatio   : undefined,
+    marketCap:        stockDetails.marketCap && stockDetails.marketCap > 0 ? stockDetails.marketCap : undefined,
+    sector:           stockDetails.sector,
+    // Revenue/EPS growth, D/E, and profit margin require financial statement APIs
+    // (not available on the free Polygon tier) — these default to undefined
+    // so the scoring engine applies neutral fallback values.
     revenueGrowthYoY: undefined,
-    epsGrowthYoY: undefined,
-    debtToEquity: undefined,
-    profitMargin: undefined,
+    epsGrowthYoY:     undefined,
+    debtToEquity:     undefined,
+    profitMargin:     undefined,
   };
 }
